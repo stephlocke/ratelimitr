@@ -67,11 +67,11 @@ token_dispenser <- function(n, period, precision = 60) {
 #'
 #' @return TRUE (possibly after a delay)
 #' @export
-request <- function(x, policy = wait) UseMethod("request")
+request <- function(x, policy = policy_wait) UseMethod("request")
 
 #' @export
 #' @rdname request
-request.token_dispenser <- function(x, policy = wait) {
+request.token_dispenser <- function(x, policy = policy_wait) {
     tryCatch(
         x(),
         rate_limit_exception = function(e) policy(x, e),

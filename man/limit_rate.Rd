@@ -4,14 +4,29 @@
 \alias{limit_rate}
 \title{Limit the rate at which a function will execute}
 \usage{
-limit_rate(f, ..., precision = 60)
+limit_rate(f, ..., policy = policy_wait, precision = 60)
 }
 \arguments{
 \item{f}{The function to be rate-limited}
 
 \item{...}{One or more rates, created using \code{\link{rate}}}
+
+\item{policy}{A policy (see details)}
+
+\item{precision}{Defines the resolution at which to measure time (see details)}
 }
 \description{
 Limit the rate at which a function will execute
+}
+\details{
+By default, \code{limit_rate} uses \code{policy_wait}, which means that
+whenever the rate-limited function is called and its execution would
+violate the rate limit, the policy is to wait until it is legal to execute
+and then do so. \code{policy_drop}, on the other hand, will not execute
+any violating function calls.
+
+Time measurements are rounded based on \code{precision}. By default,
+\code{precision} is set to 60, meaning that time will be measured in
+1/60th seconds.
 }
 

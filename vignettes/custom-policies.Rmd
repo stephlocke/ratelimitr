@@ -1,0 +1,133 @@
+---
+title: "Creating and using custom policies"
+author: "Vignette Author"
+date: "`r Sys.Date()`"
+output: 
+    rmarkdown::html_vignette:
+        toc: true
+    github_document:
+        toc: true
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+A "policy" is a function that is called whenever a rate-limited function whose execution would violate its rate limit is called. That is, what should the function do instead of just running? `ratelimitr` provides two policy functions out of the box:
+
+- `policy_wait` (the default): Wait until the function would not violate the rate limit, and then run the function. 
+- `policy_drop`: Don't pause, but also don't execute the function. 
+
+You can also create custom policies. In this example, we'll create a policy that allows the rate limit to be violated, but logs every transgression. 
+
+## Token dispensers and rate-limit exceptions
+
+Rate limiting in `ratelimitr` is acheived through the use of a `token_dispenser`. A token dispenser just grants permission, in the form of a token, for a function to run. A rate-limited function requests permission using the `request` function, and the token dispenser decides whether to grant permission (return `TRUE`), and if so, whether to wait (using `Sys.sleep`) before doing so. 
+
+A token dispenser, when it responds to a request, always returns `TRUE`. However, if a token is requested but not available (due to the constraints of the rate limit), the dispenser instead signals an exception of class `rate_limit_exception`, which contains information (the `wait_time`) about how long it will be before a token will become available. 
+
+The following demonstration should make it a little easier to see what all of that means:
+
+```{r exception-demo}
+# a token dispenser which will disburse at most 1 token per second
+dispenser <- token_dispenser(n = 1, period = 1)
+
+# each request specifies a policy
+system.time(
+    res <- replicate(2, request(dispenser, policy = policy_wait))
+)
+res
+
+system.time(
+    res <- replicate(2, request(dispenser, policy = policy_drop))
+)
+res
+```
+
+## Policies
+
+A new policy is created using the `policy` function. The `policy` function takes two arguments: 
+
+* `fun`: a function that describes what to do, and
+* `policy_name`: the name of the policy (used when printing)
+
+`fun` should be a function of two arguments named `tokens` and `exception`. `tokens` is the token dispnenser from which we are requesting a token, and `exception` is the rate limit exception that has been signalled in response to our `request`. As an example, let's take a look at the body of the `policy_wait` function:
+
+```{r show-policy-wait}
+body(policy_wait)
+```
+
+By retrieving the `wait_time` from the `exception` object, `policy_wait` can sleep for the appropriate amount of time. Then it just requests a token again. Since we waited for the requisite `wait_time`, this follow-up requests ought to return `TRUE`, which lets the associated rate-limited function know that it is free to proceed. Contrast that to the `policy_drop` function:
+
+```{r show-policy-drop}
+body(policy_drop)
+```
+
+`policy_drop` just returns `FALSE`, alerting the associated function that it does not have permission to call. The function will return `NULL` immediately. 
+
+## Creating a new policy
+
+So let's say we want to create a new policy called `policy_log`, whereby a rate-limited function will not be executed (similar to `policy_drop`), but additionally we'll keep track of the number of function calls that we refused to execute. 
+
+First we create a logger:
+
+```{r make-logger}
+logger <- function() {
+    time_saved <- 0
+    function(time) {
+        time_saved <<- time_saved + time
+        time_saved
+    }
+}
+rejection_log <- logger()
+```
+
+Now let's go ahead and create our new policy:
+
+```{r make-policy-log}
+policy_log <- policy(
+    fun = function(tokens, exception) {
+        # add the time saved by not waiting to the rejection log
+        rejection_log(exception$wait_time)
+        # return FALSE (means the rate-limited function will not be called)
+        return(FALSE)
+    }, 
+    # a name for the policy
+    policy_name = "log"
+)
+policy_log
+```
+
+## Using the policy
+
+We can now use the new policy when we create a rate-limited function with `limit_rate`.
+
+```{r limit}
+make_counter <- function() {
+    count <- 0L
+    function(increment = TRUE) {
+        if (increment) count <<- count + 1L
+        count
+    }
+}
+
+# counter will keep track of how many times it actually executes
+counter <- make_counter()
+
+# use policy_log in our rate-limited function
+limited_counter <- limit_rate(counter, rate(n = 2, period = .1),
+                              policy = policy_log)
+
+# in addition to printing the function, we also see rate-limit details
+limited_counter
+
+# our policy does not involve waiting, so this should be quick:
+system.time(replicate(100, limited_counter()))
+
+# but notice that not all 10 calls were executed:
+limited_counter(increment = FALSE)
+
+# the rejection log can tell us how much time we saved by not waiting:
+rejection_log(0)
+```
